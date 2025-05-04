@@ -1,0 +1,88 @@
+import os
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.svm import SVC
+from sklearn.decomposition import PCA
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+
+#parte que vai extrair os histogramas da imagem
+def extrair_features_histograma(imagem, bins=32):
+    hist = cv2.calcHist([imagem], [0], None, [bins], [0, 256])
+    hist = cv2.normalize(hist, hist).flatten()
+    return hist
+
+#caminhos e pastas que vao ser acessadas
+base_dir = "dataset_mamografias"
+categorias = ['normal', 'suspeita']
+
+X = []
+y = []
+
+# faz a leitura da imagem da pastas citadas anteriormente
+for idx, categoria in enumerate(categorias):
+    pasta = os.path.join(base_dir, categoria)
+    for nome_arquivo in os.listdir(pasta):
+        caminho = os.path.join(pasta, nome_arquivo)
+        imagem = cv2.imread(caminho, cv2.IMREAD_GRAYSCALE) #leitura
+        imagem = cv2.resize(imagem, (256, 256))  #define a escala e o tamanho da imagem de maneira padrao para facilitar a visulizacao 
+        features = extrair_features_histograma(imagem) #extracao
+        X.append(features)
+        y.append(idx)
+
+X = np.array(X)
+y = np.array(y)
+
+#Normaliza e reduz dimensionalidade
+scaler = StandardScaler()
+X = scaler.fit_transform(X)
+
+n_components = min(10, X.shape[0], X.shape[1])
+pca = PCA(n_components=n_components)
+X_pca = pca.fit_transform(X)
+
+# Treinamento do modelo
+X_train, X_test, y_train, y_test = train_test_split(X_pca, y, test_size=0.2, random_state=42)
+modelo = SVC(kernel='linear')
+modelo.fit(X_train, y_train)
+
+#aqui e feito a analise visual das iamgens, ele pega a pasta especificada, e busca o primeiro arquivo dentro da pasta
+#para que seja utilizada 
+pasta_suspeita = os.path.join(base_dir, 'suspeita')
+lista_arquivos = os.listdir(pasta_suspeita)
+
+if len(lista_arquivos) == 0:
+    raise FileNotFoundError("Nenhuma imagem encontrada na pasta 'suspeita'.") #esse aqui e caso o caminho esteja errado ou nao tenha foto na pasta 
+
+caminho_img_teste = os.path.join(pasta_suspeita, lista_arquivos[0])
+imagem_original = cv2.imread(caminho_img_teste, cv2.IMREAD_GRAYSCALE)
+
+if imagem_original is None:
+    raise ValueError(f"Erro ao carregar a imagem: {caminho_img_teste}")
+
+imagem_colorida = cv2.cvtColor(imagem_original, cv2.COLOR_GRAY2BGR)
+
+
+# Varre a imagem em blocos e classifica
+bloco_size = 64
+h, w = imagem_original.shape
+
+for yb in range(0, h, bloco_size):
+    for xb in range(0, w, bloco_size):
+        bloco = imagem_original[yb:yb+bloco_size, xb:xb+bloco_size]
+        if bloco.shape[0] != bloco_size or bloco.shape[1] != bloco_size:
+            continue
+        f = extrair_features_histograma(bloco)
+        f = scaler.transform([f])
+        f_pca = pca.transform(f)
+        pred = modelo.predict(f_pca)
+        if pred == 1:  # Se suspeita
+            cv2.rectangle(imagem_colorida, (xb, yb), (xb+bloco_size, yb+bloco_size), (0, 0, 255), 2) #area marcada em vermelha e a regiao suspeita
+
+# Mostra imagem com marcações
+plt.figure(figsize=(8, 8))
+plt.imshow(cv2.cvtColor(imagem_colorida, cv2.COLOR_BGR2RGB))
+plt.title("Regiões Suspeitas Detectadas")
+plt.axis('off')
+plt.show()
